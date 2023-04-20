@@ -2,185 +2,139 @@ import { Notify } from 'notiflix/build/notiflix-notify-aio';
 import SimpleLightbox from 'simplelightbox';
 import 'simplelightbox/dist/simple-lightbox.min.css';
 
-import { createMarkup } from './createMarkup';
-import { PixabayAPI } from './PixabayAPI';
-import { refs } from './refs';
-import { notifyInit } from './notifyInit';
-import { spinnerPlay, spinnerStop } from './spinner';
+import SearchPhotos from './findPhoto';
+import renderPhoto from './renderPhoto';
 
-const modalLightboxGallery = new SimpleLightbox('.gallery a', {
+const searchForm = document.querySelector('.search__form');
+const loadMoreButton = document.querySelector('.more__button');
+const gallery = document.querySelector('.gallery');
+const switchLoadButton = document.querySelector('#load-more-button');
+
+const searchPhotos = new SearchPhotos();
+let lightbox = new SimpleLightbox('.gallery .photo-link', {
+  captionsData: 'alt',
   captionDelay: 250,
 });
+let isLoading = false;
 
-spinnerPlay();
+searchForm.addEventListener('submit', choseRadioButton);
+searchForm.addEventListener('submit', getPhotos);
 
-window.addEventListener('load', () => {
-  console.log('All resources finished loading!');
-
-  spinnerStop();
-});
-
-refs.btnLoadMore.classList.add('is-hidden');
-
-const pixaby = new PixabayAPI();
-
-const options = {
-  root: null,
-  rootMargin: '100px',
-  threshold: 1.0,
-};
-
-const loadMorePhotos = async function (entries, observer) {
-  entries.forEach(async entry => {
-    if (entry.isIntersecting) {
-      observer.unobserve(entry.target);
-      pixaby.incrementPage();
-
-      spinnerPlay();
-
-      try {
-        spinnerPlay();
-
-        const { hits } = await pixaby.getPhotos();
-        const markup = createMarkup(hits);
-        refs.gallery.insertAdjacentHTML('beforeend', markup);
-
-        // const showMore = pixaby.hasMorePhotos();
-        if (pixaby.hasMorePhotos) {
-          const lastItem = document.querySelector('.gallery a:last-child');
-          observer.observe(lastItem);
-        } else
-          Notify.info(
-            "We're sorry, but you've reached the end of search results.",
-            notifyInit
-          );
-
-        modalLightboxGallery.refresh();
-        scrollPage();
-      } catch (error) {
-        Notify.failure(error.message, 'Something went wrong!', notifyInit);
-        clearPage();
-      } finally {
-        spinnerStop();
-      }
-    }
-  });
-};
-
-const observer = new IntersectionObserver(loadMorePhotos, options);
-
-const onSubmitClick = async event => {
-  event.preventDefault();
-
-  const {
-    elements: { searchQuery },
-  } = event.target;
-
-  const search_query = searchQuery.value.trim().toLowerCase();
-
-  if (!search_query) {
-    clearPage();
-    Notify.info('Enter data to search!', notifyInit);
-
-    refs.searchInput.placeholder = 'What`re we looking for?';
-    return;
+function choseRadioButton() {
+  if (switchLoadButton.checked) {
+    window.removeEventListener('scroll', infiniteScroll);
+    loadMoreButton.addEventListener('click', loadMorePhotos);
+  } else {
+    hideButton();
+    loadMoreButton.removeEventListener('click', loadMorePhotos);
+    window.addEventListener('scroll', infiniteScroll);
   }
-
-  pixaby.query = search_query;
-
-  clearPage();
-
-  try {
-    spinnerPlay();
-    const { hits, total } = await pixaby.getPhotos();
-
-    if (hits.length === 0) {
-      Notify.failure(
-        `Sorry, there are no images matching your ${search_query}. Please try again.`,
-        notifyInit
-      );
-
-      return;
-    }
-
-    const markup = createMarkup(hits);
-    refs.gallery.insertAdjacentHTML('beforeend', markup);
-
-    pixaby.setTotal(total);
-    Notify.success(`Hooray! We found ${total} images.`, notifyInit);
-
-    if (pixaby.hasMorePhotos) {
-      //refs.btnLoadMore.classList.remove('is-hidden');
-
-      const lastItem = document.querySelector('.gallery a:last-child');
-      observer.observe(lastItem);
-    }
-
-    modalLightboxGallery.refresh();
-    // scrollPage();
-  } catch (error) {
-    Notify.failure(error.message, 'Something went wrong!', notifyInit);
-
-    clearPage();
-  } finally {
-    spinnerStop();
-  }
-};
-
-const onLoadMore = async () => {
-  pixaby.incrementPage();
-
-  if (!pixaby.hasMorePhotos) {
-    refs.btnLoadMore.classList.add('is-hidden');
-    Notify.info("We're sorry, but you've reached the end of search results.");
-    notifyInit;
-  }
-  try {
-    const { hits } = await pixaby.getPhotos();
-    const markup = createMarkup(hits);
-    refs.gallery.insertAdjacentHTML('beforeend', markup);
-
-    modalLightboxGallery.refresh();
-  } catch (error) {
-    Notify.failure(error.message, 'Something went wrong!', notifyInit);
-
-    clearPage();
-  }
-};
-
-function clearPage() {
-  pixaby.resetPage();
-  refs.gallery.innerHTML = '';
-  refs.btnLoadMore.classList.add('is-hidden');
 }
 
-refs.form.addEventListener('submit', onSubmitClick);
-refs.btnLoadMore.addEventListener('click', onLoadMore);
+function getRequest() {
+  if (isLoading) return;
+  isLoading = true;
 
-//  Smooth scrolling
+  searchPhotos
+    .getGallery()
+    .then(photoGallery => {
+      const totalHits = photoGallery.totalHits;
+      if (totalHits === 0) {
+        Notify.failure(
+          'Sorry, there are no images matching your search query. Please try again.', {
+          position: 'center-center',
+          });
+        return;
+      } else if (searchPhotos.page === 2) {
+        Notify.success(`Hooray! We found ${totalHits} images.`, {
+          position: 'center-center',
+        });
+      }
 
-function scrollPage() {
-  const { height: cardHeight } = document
-    .querySelector('.photo-gallery')
-    .firstElementChild.getBoundingClientRect();
+      const photoHits = photoGallery.hits;
+      photoHits.map(photoHit => {
+        renderPhoto(photoHit);
+      });
 
+      lightbox.refresh();
+
+      if (totalHits / searchPhotos.per_page <= searchPhotos.page) {
+        Notify.warning(
+          `We're sorry, but you've reached the end of search results.`,
+          { position: 'center-center' }
+        );
+        window.removeEventListener('scroll', infiniteScroll);
+      }
+      tongleLoadMoreButton(totalHits);
+      isLoading = false;
+    })
+    .catch(error => {
+      Notify.failure(`An error has occurred: ${error}`, {
+        position: 'center-center',
+      });
+      isLoading = false;
+    });
+}
+
+function getPhotos(event) {
+  event.preventDefault();
+
+  searchPhotos.query = event.currentTarget.elements.searchQuery.value;
+  if (searchPhotos.query === '') {
+    Notify.warning('Please, enter word or words for searching pictures.', {
+      position: 'center-center',
+    });
+    return;
+  }
+  searchPhotos.resetPage();
+  clearGallery();
+  getRequest();
+}
+
+function loadMorePhotos() {
+  getRequest();
+}
+
+function tongleLoadMoreButton(totalHits) {
+  if (switchLoadButton.checked) {
+    if (totalHits / searchPhotos.per_page <= searchPhotos.page) {
+      hideButton();
+    } else {
+      showButton();
+    }
+    if (searchPhotos.page > 1) {
+      smoothScroll();
+    }
+  }
+}
+
+function clearGallery() {
+  gallery.innerHTML = '';
+}
+
+function showButton() {
+  loadMoreButton.classList.remove('hidden');
+}
+
+function hideButton() {
+  loadMoreButton.classList.add('hidden');
+}
+
+function smoothScroll() {
+  const { height: cardHeight } =
+    gallery.firstElementChild.getBoundingClientRect();
   window.scrollBy({
     top: cardHeight * 2,
     behavior: 'smooth',
   });
 }
 
-//Button smooth scroll up
+function infiniteScroll() {
+  const scrollTop = document.documentElement.scrollTop;
+  const clientHeight = window.innerHeight;
+  const scrollHeight = document.body.offsetHeight;
 
-window.addEventListener('scroll', scrollFunction);
-
-function scrollFunction() {
-  if (document.body.scrollTop > 30 || document.documentElement.scrollTop > 30) {
-    refs.btnUpWrapper.style.display = 'flex';
-  } else {
-    refs.btnUpWrapper.style.display = 'none';
+  if (scrollTop + clientHeight >= scrollHeight && !isLoading) {
+    getRequest();
   }
 }
-refs.btnUp.addEventListener('click', () => {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-});

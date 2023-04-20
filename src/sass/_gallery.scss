@@ -1,0 +1,16 @@
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 40px;
+  background-color: rgb(206, 203, 203);
+}
+
+.photo-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.info {
+  font-size: 12px;
+}
